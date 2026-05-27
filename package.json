@@ -1,0 +1,45 @@
+{
+  "name": "@sesamehut/design-tokens-md",
+  "version": "0.1.0",
+  "description": "DESIGN.md → DTCG → Tailwind v4 @theme codegen primitives. Pure, deterministic, byte-identical contracts.",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@google/design.md": "^0.2.0",
+    "yaml": "^2.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sesamehut/design-tokens-md.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sesamehut/design-tokens-md/issues"
+  },
+  "homepage": "https://github.com/sesamehut/design-tokens-md#readme",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "design-tokens",
+    "dtcg",
+    "design-md",
+    "tailwindcss",
+    "tailwind-v4",
+    "codegen"
+  ],
+  "devDependencies": {
+    "@google/design.md": "^0.2.0",
+    "yaml": "^2.9.0"
+  }
+}
