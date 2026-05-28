@@ -78,6 +78,22 @@ function str(v) {
   return String(v);
 }
 
+/**
+ * Typography fontSize → canonical CSS value. When a scale declares an optional
+ * `fluid: {preferred, max}` beside its fixed `fontSize`, assemble a CSS
+ * clamp(fontSize, preferred, max) — `fontSize` is the min / non-fluid floor.
+ *
+ * `fluid` is a key @google/design.md does not model, so its strip-unknown lint
+ * drops it before dimension validation — the `vw` preferred term never trips
+ * the px/rem/em unit check. A scale without `fluid` returns the verbatim
+ * dimension, byte-identical to before this field existed.
+ */
+function fontSizeValue(t) {
+  return t.fluid
+    ? `clamp(${str(t.fontSize)}, ${str(t.fluid.preferred)}, ${str(t.fluid.max)})`
+    : str(t.fontSize);
+}
+
 /** sRGB byte → 0..1 component at 5-decimal precision (round-trips ×255 + round). */
 function srgbComponent(byte) {
   return Math.round((byte / 255) * 100000) / 100000;
@@ -170,23 +186,35 @@ export function buildDtcg(frontmatter, { outOfScopeComponents = new Set() } = {}
     ]),
   ]);
 
-  // ── Primitive · dimension groups (verbatim "Npx" strings). ──
+  // ── Primitive · dimension groups. A value is either a verbatim "Npx"
+  // string or a {group.token} alias (e.g. a layout rhythm pointing at
+  // {spacing.section}). normalizeRef is a pass-through for literals, so
+  // spacing/rounded — which never carry aliases — stay byte-identical. ──
   const dimensionGroup = (src) =>
     ordered([
       ['$type', 'dimension'],
-      ...sortedEntries(src).map(([name, v]) => [name, { $value: str(v) }]),
+      ...sortedEntries(src).map(([name, v]) => [
+        name,
+        { $value: normalizeRef(str(v)) },
+      ]),
     ]);
   const spacing = dimensionGroup(fm.spacing);
   const rounded = dimensionGroup(fm.rounded);
+  // Optional page-layout primitives (container rails, gutters, section
+  // rhythm). Declaration-driven: a consumer that omits `layout:` — e.g. a
+  // component library that never lays out pages — emits no layout group and
+  // its output is unchanged.
+  const layout = fm.layout ? dimensionGroup(fm.layout) : null;
 
   // ── Primitive · typography (composite; every sub-value source-faithful;
-  // textTransform only when DESIGN.md declares it). ──
+  // fontSize may be fluid — see fontSizeValue; textTransform only when
+  // DESIGN.md declares it). ──
   const typography = ordered([
     ['$type', 'typography'],
     ...sortedEntries(fm.typography).map(([name, t]) => {
       const value = ordered([
         ['fontFamily', str(t.fontFamily)],
-        ['fontSize', str(t.fontSize)],
+        ['fontSize', fontSizeValue(t)],
         ['fontWeight', t.fontWeight],
         ['lineHeight', str(t.lineHeight)],
         ['letterSpacing', str(t.letterSpacing)],
@@ -235,6 +263,7 @@ export function buildDtcg(frontmatter, { outOfScopeComponents = new Set() } = {}
     ['color', color],
     ['spacing', spacing],
     ['rounded', rounded],
+    ...(layout ? [['layout', layout]] : []),
     ['typography', typography],
     ['semantic', ordered([['color', semanticColor]])],
     ['component', component],

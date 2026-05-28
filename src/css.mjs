@@ -13,7 +13,8 @@
 //
 // Output shape (Tailwind v4, verified contract):
 //   @theme         — primitives → utilities (--color-* --spacing-* --radius-*
-//                    --text-* with --line-height/--font-weight/--letter-spacing)
+//                    --layout-* --text-* with
+//                    --line-height/--font-weight/--letter-spacing)
 //   @theme inline  — semantic light-only aliases → var(--color-<primitive>)
 //   :root          — typography family/transform companions (no @theme
 //                    namespace) + the component visual contract. Component-
@@ -123,11 +124,17 @@ export function renderTokensCss({ dtcg, header }) {
   }
   out.push('', `${INDENT}/* Primitive · spacing */`);
   for (const name of tokensOf(dtcg.spacing)) {
-    out.push(line(`spacing-${name}`, dtcg.spacing[name].$value));
+    out.push(line(`spacing-${name}`, aliasToVar(dtcg.spacing[name].$value)));
   }
   out.push('', `${INDENT}/* Primitive · radius */`);
   for (const name of tokensOf(dtcg.rounded)) {
-    out.push(line(`radius-${name}`, dtcg.rounded[name].$value));
+    out.push(line(`radius-${name}`, aliasToVar(dtcg.rounded[name].$value)));
+  }
+  if (dtcg.layout) {
+    out.push('', `${INDENT}/* Primitive · layout — page rails / gutters / rhythm */`);
+    for (const name of tokensOf(dtcg.layout)) {
+      out.push(line(`layout-${name}`, aliasToVar(dtcg.layout[name].$value)));
+    }
   }
   out.push('', `${INDENT}/* Primitive · typography */`);
   for (const name of tokensOf(dtcg.typography)) {
