@@ -35,12 +35,22 @@ import { parse } from 'yaml';
 import { CODEPOINT } from './io.mjs';
 
 /**
- * Semantic layer — applied HERE, not in DESIGN.md. Light-only: deliberately
- * NO dark semantic layer (surface-dark / on-dark stay primitives consumed
- * directly by the component layer). No accent semantics either — pastel
- * callouts are component-scoped (YAGNI). Each role is grounded in DESIGN.md's
- * own "## Colors" role prose; the rationale is checked into the DTCG
- * $description so the layering is auditable.
+ * Vendor namespace (reverse-DNS, per DTCG $extensions convention) under which a
+ * primitive carries its alternate-mode override. Single source of truth, shared
+ * by the renderer and any DTCG consumer (e.g. a React Native theme builder that
+ * reads `$extensions[DARK_EXTENSION_NS].dark|light` instead of CSS vars).
+ */
+export const DARK_EXTENSION_NS = 'com.sesamehut.design-tokens-md';
+
+/**
+ * Semantic layer — applied HERE, not in DESIGN.md. A SINGLE role→primitive
+ * mapping, mode-agnostic: there is deliberately NO per-mode semantic remapping.
+ * When a `colors-dark:` / `colors-light:` delta recolors a primitive (see
+ * buildDtcg), every role aliasing it re-resolves automatically — dark mode here
+ * is *recolor*, not *remap*. No accent semantics either — pastel callouts are
+ * component-scoped (YAGNI). Each role is grounded in DESIGN.md's own "## Colors"
+ * role prose; the rationale is checked into the DTCG $description so the
+ * layering is auditable.
  *
  * This is the DEFAULT for buildDtcg's `semanticColor` option — the 14-role
  * contract DESIGN.md primitives must supply when no override is passed. It is
@@ -180,7 +190,20 @@ function sortedEntries(obj) {
  *   uses a different primitive vocabulary passes its own mapping; the rest of
  *   the pipeline is structure-agnostic. Defaults to SEMANTIC_COLOR — omitting
  *   it reproduces prior output byte-for-byte.
- * @returns {{ dtcg: object, scope: { kept: string[], dropped: string[] } }}
+ *
+ * Color modes (beyond Google's base spec): the base `colors:` palette is the
+ * project's primary mode; an OPTIONAL sibling frontmatter block recolors a
+ * subset of primitives for the *other* mode — `colors-dark:` (base is light)
+ * or `colors-light:` (base is dark), mutually exclusive. Each override is
+ * carried in the primitive's DTCG `$extensions` envelope; the renderer turns
+ * it into a dark/light CSS block (see renderTokensCss `colorModes`). Absent
+ * both blocks, every node keeps its single-mode `{ $value }` shape and output
+ * is byte-identical.
+ *
+ * @returns {{ dtcg: object, scope: { kept: string[], dropped: string[],
+ *   darkLiterals: string[] } }} `darkLiterals` lists `component.field` color
+ *   slots that are hardcoded literals (won't flip when a mode delta is active);
+ *   empty unless a delta is present.
  */
 export function buildDtcg(
   frontmatter,
@@ -188,13 +211,58 @@ export function buildDtcg(
 ) {
   const fm = parse(frontmatter);
 
-  // ── Primitive · color (DTCG 2025.10 Color Module object form). ──
+  // ── Optional color-mode delta. The base `colors:` palette is the project's
+  // primary mode; an optional sibling block recolors a subset for the *other*
+  // mode — at most one (a base palette flips one way). Fail loud on both
+  // present, or on an override naming a primitive the base never declared
+  // (a dead var / typo). ──
+  const darkDelta = fm['colors-dark'];
+  const lightDelta = fm['colors-light'];
+  if (darkDelta && lightDelta) {
+    throw new Error(
+      'DESIGN.md declares both colors-dark and colors-light — a base palette ' +
+        'carries at most one alternate mode (model.mjs).',
+    );
+  }
+  const altMode = darkDelta ? 'dark' : lightDelta ? 'light' : null;
+  const altDelta = darkDelta ?? lightDelta ?? null;
+  if (altDelta) {
+    for (const key of Object.keys(altDelta)) {
+      if (!Object.hasOwn(fm.colors, key)) {
+        throw new Error(
+          `colors-${altMode} "${key}" has no matching colors primitive — ` +
+            `model.mjs cannot emit a ${altMode} override for an undeclared ` +
+            `primitive.`,
+        );
+      }
+    }
+  }
+
+  // ── Primitive · color (DTCG 2025.10 Color Module object form). A primitive
+  // the alternate mode recolors carries its override in DTCG's $extensions
+  // envelope (vendor-namespaced, keyed by mode) — off the standard $value so
+  // the file stays spec-conforming and a primitive without a delta keeps the
+  // byte-identical single-mode `{ $value }` shape. ──
   const color = ordered([
     ['$type', 'color'],
-    ...sortedEntries(fm.colors).map(([name, source]) => [
-      name,
-      { $value: parseColor(str(source)) },
-    ]),
+    ...sortedEntries(fm.colors).map(([name, source]) => {
+      const value = parseColor(str(source));
+      if (altDelta && Object.hasOwn(altDelta, name)) {
+        return [
+          name,
+          ordered([
+            ['$value', value],
+            [
+              '$extensions',
+              {
+                [DARK_EXTENSION_NS]: { [altMode]: parseColor(str(altDelta[name])) },
+              },
+            ],
+          ]),
+        ];
+      }
+      return [name, { $value: value }];
+    }),
   ]);
 
   // ── Primitive · dimension groups. A value is either a verbatim "Npx"
@@ -261,6 +329,21 @@ export function buildDtcg(
     .filter((n) => outOfScopeComponents.has(n))
     .sort(CODEPOINT);
 
+  // ── Dark-mode lint (surfaced, not thrown): a kept component whose color
+  // slot is a hardcoded literal (not a {colors.x} ref, not `transparent`) has
+  // no primitive var to re-resolve, so it will NOT flip when a mode delta
+  // recolors primitives. Echoed by the orchestrator; empty without a delta. ──
+  const darkLiterals = altDelta
+    ? kept.flatMap((name) =>
+        ['backgroundColor', 'textColor']
+          .filter((f) => {
+            const v = fm.components[name]?.[f];
+            return v != null && /^(#|rgba\()/i.test(str(v));
+          })
+          .map((f) => `${name}.${f}`),
+      )
+    : [];
+
   const component = ordered(
     kept.map((name) => {
       const bundle = fm.components[name];
@@ -286,5 +369,5 @@ export function buildDtcg(
     ['component', component],
   ]);
 
-  return { dtcg, scope: { kept, dropped } };
+  return { dtcg, scope: { kept, dropped, darkLiterals } };
 }

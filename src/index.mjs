@@ -3,6 +3,6 @@
 // own orchestrator with project paths, scope filter, lint baseline, and banner.
 
 export { CODEPOINT, readDesignMd, normalizeText, serializeJson } from './io.mjs';
-export { buildDtcg, SEMANTIC_COLOR } from './model.mjs';
+export { buildDtcg, SEMANTIC_COLOR, DARK_EXTENSION_NS } from './model.mjs';
 export { assertLintBaseline, DEFAULT_BASELINE } from './baseline.mjs';
 export { renderTokensCss } from './css.mjs';

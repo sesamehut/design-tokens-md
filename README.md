@@ -92,15 +92,16 @@ All exports are pure functions or constants, imported from the package root.
 
 - **`readDesignMd(path)`** → `{ raw, frontmatter }`. Reads the file (CRLF→LF) and splits off the verbatim YAML frontmatter; throws if absent.
 - **`assertLintBaseline(report, baseline?)`** — gate on `@google/design.md`'s `lint()` output; throws **iff** a finding is outside the accepted `baseline` (membership-based, not severity-based — a documented warning floor passes, a *new* warning fails). Defaults to `DEFAULT_BASELINE`.
-- **`buildDtcg(frontmatter, options?)`** → `{ dtcg, scope: { kept, dropped } }`. The translation layer; re-parses the YAML and builds canonical DTCG 2025.10 (color in `{colorSpace, components, alpha?, hex}` form, fixed group order, code-point order within each group). `options.outOfScopeComponents` (`Set<string>`) drops chrome from the visual contract; `options.semanticColor` redefines the role→primitive layer (defaults to `SEMANTIC_COLOR`; omitting it is byte-identical).
-- **`renderTokensCss({ dtcg, header })`** → the full `tokens.css`: `@theme` primitives, `@theme inline` semantic aliases, and a `:root` block for typography companions + the component contract. Sole authority over byte order.
+- **`buildDtcg(frontmatter, options?)`** → `{ dtcg, scope: { kept, dropped, darkLiterals } }`. The translation layer; re-parses the YAML and builds canonical DTCG 2025.10 (color in `{colorSpace, components, alpha?, hex}` form, fixed group order, code-point order within each group). `options.outOfScopeComponents` (`Set<string>`) drops chrome from the visual contract; `options.semanticColor` redefines the role→primitive layer (defaults to `SEMANTIC_COLOR`; omitting it is byte-identical). An optional `colors-dark:` / `colors-light:` frontmatter block (see [Dark mode](#dark-mode--color-modes)) attaches each override to its primitive's `$extensions`; `scope.darkLiterals` flags component color slots that can't flip.
+- **`renderTokensCss({ dtcg, header, colorModes? })`** → the full `tokens.css`: `@theme` primitives, `@theme inline` semantic aliases, and a `:root` block for typography companions + the component contract. Sole authority over byte order. `colorModes` (optional) appends the dark/light override block — omit it for single-mode output (byte-identical to before the option existed).
 - **`SEMANTIC_COLOR`** — the default semantic mapping (see below); re-exported to inspect, extend, or replace.
+- **`DARK_EXTENSION_NS`** — the reverse-DNS `$extensions` namespace (`com.sesamehut.design-tokens-md`) under which a primitive carries its alternate-mode override; read it to build a non-CSS theme (e.g. React Native) from the DTCG file.
 - **`DEFAULT_BASELINE`** — accepted-floor lint identities for the `DESIGN.md` shape this package was first built against.
 - **`serializeJson` · `normalizeText` · `CODEPOINT`** — determinism utilities: ordered JSON, LF + one trailing newline, and a pure UTF-16 comparator (chosen over `localeCompare`/`Intl.Collator`, whose ICU tables vary across builds and would break a byte-identical gate).
 
 ### The semantic color layer
 
-The semantic layer is applied **here**, not in `DESIGN.md` — by default 14 light-only roles, each aliasing one primitive (there is no dark layer; dark surfaces stay component-scoped). The default mapping (`SEMANTIC_COLOR`) expects these primitive names: `canvas`, `surface-card`, `surface-soft`, `surface-doc`, `primary`, `on-primary`, `ink`, `body`, `ash`, `stone`, `link-blue`, `link-teal`, `hairline`, `hairline-soft`. If your `DESIGN.md` uses a different vocabulary, pass your own mapping:
+The semantic layer is applied **here**, not in `DESIGN.md` — by default 14 roles, each aliasing one primitive. It is a *single, mode-agnostic* mapping: there is no per-mode remapping. When a [dark/light delta](#dark-mode--color-modes) recolors a primitive, every role aliasing it re-resolves automatically (recolor, not remap). The default mapping (`SEMANTIC_COLOR`) expects these primitive names: `canvas`, `surface-card`, `surface-soft`, `surface-doc`, `primary`, `on-primary`, `ink`, `body`, `ash`, `stone`, `link-blue`, `link-teal`, `hairline`, `hairline-soft`. If your `DESIGN.md` uses a different vocabulary, pass your own mapping:
 
 ```js
 buildDtcg(frontmatter, {
@@ -117,6 +118,51 @@ buildDtcg(frontmatter, {
 - **`layout` group** — page rails / gutters / rhythm; emitted only when `DESIGN.md` declares `layout:`.
 - **Fluid typography** — `fluid: { preferred, max }` beside a `fontSize` compiles to `clamp(fontSize, preferred, max)`.
 - **Alias resolution** — any dimension value can be a `{group.token}` reference (e.g. `{spacing.section}` → `var(--spacing-section)`).
+
+### Dark mode / color modes
+
+`DESIGN.md`'s `colors:` block is the project's **base** mode (light or dark — the engine doesn't care about the values). To add the *other* mode, declare a sibling **delta** block listing only the primitives that change — `colors-dark:` (base is light) or `colors-light:` (base is dark), mutually exclusive:
+
+```yaml
+colors:        # base (here: light)
+  canvas: "#eeefe9"
+  ink:    "#23251d"
+colors-dark:   # delta — only what flips
+  canvas: "#1a1b16"
+  ink:    "#f7f5f2"
+```
+
+Each override rides the primitive's DTCG `$extensions` (`com.sesamehut.design-tokens-md` → `{ dark | light }`), so `tokens.dtcg.json` stays spec-conforming and a primitive without a delta keeps its byte-identical single-mode shape. Pass `colorModes` to `renderTokensCss` to emit the CSS override block:
+
+```js
+renderTokensCss({
+  dtcg,
+  header,
+  colorModes: { strategy: 'selector' }, // 'selector' (default) | 'media' | 'both'
+});
+```
+
+The block is **raw `--color-*` redeclaration** under a dark/light activation — never a second `@theme`. Because every utility, semantic alias, and component var resolves `var(--color-*)` at use-site, redeclaring just the changed primitives flips the whole system. This is **recolor, not remap**: a delta can't re-point a semantic role to a different primitive (a future `semanticColorDark`, deliberately out of scope).
+
+Strategies:
+
+- **`'selector'`** (default) — emits `[data-theme="dark"] { … }`. This is the Tailwind v4 path for **both** system-follow *and* a manual toggle: add the matching variant and the official init script, and the engine just supplies the dark vars under that selector.
+  ```css
+  @import "tailwindcss";
+  @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+  ```
+  ```html
+  <script>
+    // inline in <head> to avoid FOUC — system default + remembered manual choice
+    document.documentElement.dataset.theme =
+      localStorage.theme ??
+      (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  </script>
+  ```
+- **`'media'`** — emits `@media (prefers-color-scheme: dark) { :root { … } }` only (follows the OS, no manual toggle, zero JS).
+- **`'both'`** — emits both, with the media query guarded (`:root:not([data-theme="light"])`) so an explicit choice always wins.
+
+`darkSelector` / `lightSelector` (default `[data-theme="dark"]` / `[data-theme="light"]`) and `colorScheme` (default `true`, emits `color-scheme`) are configurable. A **dark-only** project needs no delta — put the dark values in `colors:` (single-mode output, exactly as today) and declare `color-scheme: dark` on your own `:root`. Non-CSS consumers (e.g. React Native) skip `colorModes` and read `$extensions` (`DARK_EXTENSION_NS`) straight from the DTCG file.
 
 ## Relationship to design.md
 

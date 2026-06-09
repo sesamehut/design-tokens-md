@@ -15,12 +15,19 @@
 //   @theme         — primitives → utilities (--color-* --spacing-* --radius-*
 //                    --layout-* --text-* with
 //                    --line-height/--font-weight/--letter-spacing)
-//   @theme inline  — semantic light-only aliases → var(--color-<primitive>)
+//   @theme inline  — semantic aliases → var(--color-<primitive>)
 //   :root          — typography family/transform companions (no @theme
 //                    namespace) + the component visual contract. Component-
 //                    scoped, never utility-generating.
+//   [color modes]  — OPTIONAL trailing block, emitted only when DESIGN.md
+//                    carries a colors-dark/colors-light delta AND `colorModes`
+//                    is passed: raw --color-* redeclaration under a dark/light
+//                    activation (selector / media / both). Never a second
+//                    @theme; the already-generated utilities re-resolve through
+//                    the overridden var at use-site.
 
 import { normalizeText } from './io.mjs';
+import { DARK_EXTENSION_NS } from './model.mjs';
 
 const INDENT = '  ';
 
@@ -106,10 +113,71 @@ function componentTypographyLines(name, raw, dtcg) {
 }
 
 /**
+ * Render the optional color-mode override block from the alternate-mode deltas
+ * collected off `$extensions`. Raw `--color-*` redeclaration under a dark/light
+ * activation — NEVER a second `@theme` (which can't be conditionally scoped).
+ * The base mode advertises its own `color-scheme`; the override flips both the
+ * scheme and the changed primitives, and every utility/alias re-resolves
+ * through `var(--color-*)` at use-site.
+ *
+ * `strategy`:
+ *   'selector' (default) — `[data-theme=…]` rule only; pair with Tailwind's
+ *       `@custom-variant dark` + an init script for system-follow + manual.
+ *   'media'              — `@media (prefers-color-scheme: …)` only (OS, no toggle).
+ *   'both'               — media (guarded so an explicit choice wins) + selector.
+ */
+function renderColorModes(
+  entries,
+  {
+    strategy = 'selector',
+    darkSelector = '[data-theme="dark"]',
+    lightSelector = '[data-theme="light"]',
+    colorScheme = true,
+  } = {},
+) {
+  if (strategy !== 'selector' && strategy !== 'media' && strategy !== 'both') {
+    throw new Error(
+      `renderTokensCss: unknown colorModes.strategy ${JSON.stringify(strategy)}` +
+        ' — expected "selector", "media", or "both".',
+    );
+  }
+  // buildDtcg enforces a single alternate mode, so every entry shares it.
+  const altMode = entries[0].mode;
+  const baseScheme = altMode === 'dark' ? 'light' : 'dark';
+  const altSelector = altMode === 'dark' ? darkSelector : lightSelector;
+  const guardSelector = altMode === 'dark' ? lightSelector : darkSelector;
+
+  const body = [
+    ...(colorScheme ? [`${INDENT}color-scheme: ${altMode};`] : []),
+    ...entries.map(({ name, value }) =>
+      line(`color-${name}`, colorValueToCss(value)),
+    ),
+  ];
+  const nest = (lines) => lines.map((l) => (l === '' ? '' : `${INDENT}${l}`));
+
+  const lines = [`/* Color modes — ${baseScheme} base + ${altMode} override */`];
+  if (colorScheme) lines.push(`:root { color-scheme: ${baseScheme}; }`);
+  if (strategy === 'media' || strategy === 'both') {
+    const root = strategy === 'both' ? `:root:not(${guardSelector})` : ':root';
+    lines.push(
+      `@media (prefers-color-scheme: ${altMode}) {`,
+      ...nest([`${root} {`, ...body, '}']),
+      '}',
+    );
+  }
+  if (strategy === 'selector' || strategy === 'both') {
+    lines.push(`${altSelector} {`, ...body, '}');
+  }
+  return lines;
+}
+
+/**
  * Pure renderer: canonical DTCG model → the full tokens.css text (header
  * included, LF, single trailing newline). The single source of byte order.
+ * `colorModes` (optional) emits the trailing dark/light override block; omit it
+ * for single-mode output (byte-identical to before this option existed).
  */
-export function renderTokensCss({ dtcg, header }) {
+export function renderTokensCss({ dtcg, header, colorModes }) {
   const tokensOf = (group) =>
     Object.keys(group).filter((k) => k !== '$type' && k !== '$description');
 
@@ -177,6 +245,28 @@ export function renderTokensCss({ dtcg, header }) {
     }
   }
   out.push('}');
+
+  // ── Optional color-mode override — emitted LAST so it wins the cascade, and
+  // absent entirely when no primitive carries a delta, keeping the single-mode
+  // default path byte-identical. ──
+  const modeEntries = tokensOf(dtcg.color)
+    .map((name) => {
+      const ext = dtcg.color[name].$extensions?.[DARK_EXTENSION_NS];
+      if (!ext) return null;
+      const mode = ext.dark != null ? 'dark' : 'light';
+      return { name, mode, value: ext[mode] };
+    })
+    .filter(Boolean);
+  if (modeEntries.length > 0) {
+    if (!colorModes) {
+      throw new Error(
+        'tokens carry color-mode deltas ($extensions) but renderTokensCss was ' +
+          'called without `colorModes` — the CSS would silently drop them. ' +
+          'Pass { colorModes: { strategy: "selector" | "media" | "both" } }.',
+      );
+    }
+    out.push('', ...renderColorModes(modeEntries, colorModes));
+  }
 
   return normalizeText(out.join('\n'));
 }
