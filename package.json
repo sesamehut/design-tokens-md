@@ -1,7 +1,7 @@
 {
   "name": "@sesamehut/design-tokens-md",
-  "version": "0.2.0",
-  "description": "DESIGN.md → DTCG → Tailwind v4 @theme codegen primitives. Pure, deterministic, byte-identical contracts.",
+  "version": "0.2.1",
+  "description": "Compile a DESIGN.md spec into W3C DTCG design tokens and Tailwind v4 @theme CSS — pure, deterministic, byte-identical codegen primitives.",
   "type": "module",
   "main": "./src/index.mjs",
   "exports": {
@@ -32,11 +32,19 @@
   },
   "keywords": [
     "design-tokens",
+    "design-system",
     "dtcg",
+    "w3c-design-tokens",
     "design-md",
+    "design.md",
     "tailwindcss",
+    "tailwind",
     "tailwind-v4",
-    "codegen"
+    "theme",
+    "css-variables",
+    "css-custom-properties",
+    "codegen",
+    "tokens"
   ],
   "devDependencies": {
     "@google/design.md": "^0.2.0",
