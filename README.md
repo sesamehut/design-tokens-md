@@ -173,6 +173,8 @@ assertLintBaseline(lint(raw) /*, MY_BASELINE */);
 const { dtcg, scope } = buildDtcg(frontmatter, {
   // Drop chrome you keep as a visual asset but your app shell never renders:
   // outOfScopeComponents: new Set(['doc-sidebar', 'pricing-tier-card']),
+  // Redefine the semantic layer in your own primitive vocabulary:
+  // semanticColor: [['surface', 'bg', 'Page background'], /* …tuples */],
 });
 
 // Stage 4 — write both artifacts (deterministic: LF, one trailing newline)
@@ -295,7 +297,7 @@ Now `bg-primary`, `text-content-body`, `rounded-md`, `text-hero-display` and fri
 
 ## The semantic color contract
 
-The semantic layer is applied **here**, not in `DESIGN.md`. It is a fixed set of **14 light-only roles**, each aliasing one primitive color. Your `DESIGN.md` `colors:` must therefore provide these primitive names:
+The semantic layer is applied **here**, not in `DESIGN.md`. By default it is a set of **14 light-only roles**, each aliasing one primitive color, so a `DESIGN.md` that adopts the default mapping must provide these primitive names:
 
 | Semantic role          | → primitive      | Meaning                                        |
 | ---------------------- | ---------------- | ---------------------------------------------- |
@@ -314,7 +316,19 @@ The semantic layer is applied **here**, not in `DESIGN.md`. It is a fixed set of
 | `line-default`         | `hairline`       | 1px card border, table rule                    |
 | `line-soft`            | `hairline-soft`  | In-card divider, soft inset rule               |
 
-This mapping is exported as [`SEMANTIC_COLOR`](#semantic_color) so you can inspect or fork it. It is deliberately opinionated and **light-only** — there is no dark semantic layer (dark surfaces stay component-scoped primitives). If your vocabulary differs, fork the array; the rest of the pipeline is structure-agnostic.
+This mapping is exported as [`SEMANTIC_COLOR`](#semantic_color), and it is the **default** for `buildDtcg`'s `semanticColor` option. It is deliberately opinionated and **light-only** — there is no dark semantic layer (dark surfaces stay component-scoped primitives). If your `DESIGN.md` uses a different primitive vocabulary, pass your own role→primitive mapping rather than adopting these names:
+
+```js
+buildDtcg(frontmatter, {
+  semanticColor: [
+    ['surface', 'bg', 'Page background'],
+    ['accent', 'brand', 'Primary CTA surface'],
+    // …[role, primitive, description] tuples in your own vocabulary
+  ],
+});
+```
+
+Omitting the option keeps the built-in 14-role contract; the rest of the pipeline is structure-agnostic.
 
 ---
 
@@ -341,6 +355,7 @@ The translation layer. Parses the frontmatter YAML and builds the canonical DTCG
 
 - `frontmatter` — the verbatim YAML string from `readDesignMd`
 - `options.outOfScopeComponents` — a `Set<string>` of component names to drop from the visual contract (chrome you keep in `DESIGN.md` as a visual asset but your app never renders). Defaults to keeping all.
+- `options.semanticColor` — the role→primitive semantic layer as `[role, primitive, description]` tuples (same shape as [`SEMANTIC_COLOR`](#semantic_color)). Pass your own to redefine the layer in your vocabulary. Defaults to `SEMANTIC_COLOR`; omitting it reproduces prior output byte-for-byte.
 - **Returns** `{ dtcg, scope: { kept: string[], dropped: string[] } }`
 
 The `dtcg` object is spec-compliant W3C DTCG 2025.10: color values use the object form `{colorSpace, components, alpha?, hex}`; semantic values are alias strings; typography is the composite form; components ride DTCG's extensibility envelope. Ordering is canonical (fixed group order, code-point order within each group).
@@ -359,7 +374,7 @@ An array of accepted-floor identity strings (`severity::path` or `severity::mess
 
 ### `SEMANTIC_COLOR`
 
-The fixed 14-role semantic contract as an array of `[role, primitive, description]` tuples — the source for the table [above](#the-semantic-color-contract). Re-exported so you can inspect or fork the mapping.
+The **default** 14-role semantic contract as an array of `[role, primitive, description]` tuples — the source for the table [above](#the-semantic-color-contract) and the default for [`buildDtcg`'s `semanticColor` option](#builddtcgfrontmatter-options). Re-exported so you can inspect, extend, or fully replace the mapping.
 
 ### `serializeJson(value)` · `normalizeText(text)` · `CODEPOINT`
 

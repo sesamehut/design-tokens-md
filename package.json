@@ -1,6 +1,6 @@
 {
   "name": "@sesamehut/design-tokens-md",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Compile a DESIGN.md spec into W3C DTCG design tokens and Tailwind v4 @theme CSS — pure, deterministic, byte-identical codegen primitives.",
   "type": "module",
   "main": "./src/index.mjs",

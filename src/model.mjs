@@ -42,8 +42,10 @@ import { CODEPOINT } from './io.mjs';
  * own "## Colors" role prose; the rationale is checked into the DTCG
  * $description so the layering is auditable.
  *
- * Re-exported so a consumer can inspect / fork; the names here are the
- * fixed 14-role contract that DESIGN.md primitives must supply.
+ * This is the DEFAULT for buildDtcg's `semanticColor` option — the 14-role
+ * contract DESIGN.md primitives must supply when no override is passed. It is
+ * re-exported so a consumer can inspect it, extend it, or pass a wholly
+ * different role→primitive mapping for its own primitive vocabulary.
  */
 export const SEMANTIC_COLOR = [
   ['surface-page', 'canvas', 'Warm cream page background, end-to-end on every page.'],
@@ -172,9 +174,18 @@ function sortedEntries(obj) {
  *   from the visual contract (chrome retained as DESIGN.md visual assets
  *   but unused by the consumer's app shell — exactly the orphaned-token lint
  *   warnings the consumer baselines). Defaults to an empty set (keep all).
+ * @param {Array<[string, string, string?]>} [options.semanticColor] the
+ *   role→primitive semantic layer as [role, primitive, description] tuples
+ *   (same shape as the exported SEMANTIC_COLOR). A consumer whose DESIGN.md
+ *   uses a different primitive vocabulary passes its own mapping; the rest of
+ *   the pipeline is structure-agnostic. Defaults to SEMANTIC_COLOR — omitting
+ *   it reproduces prior output byte-for-byte.
  * @returns {{ dtcg: object, scope: { kept: string[], dropped: string[] } }}
  */
-export function buildDtcg(frontmatter, { outOfScopeComponents = new Set() } = {}) {
+export function buildDtcg(
+  frontmatter,
+  { outOfScopeComponents = new Set(), semanticColor = SEMANTIC_COLOR } = {},
+) {
   const fm = parse(frontmatter);
 
   // ── Primitive · color (DTCG 2025.10 Color Module object form). ──
@@ -224,14 +235,20 @@ export function buildDtcg(frontmatter, { outOfScopeComponents = new Set() } = {}
     }),
   ]);
 
-  // ── Semantic · color (light-only; alias → primitive; auditable). ──
-  const semanticColor = ordered([
+  // ── Semantic · color (alias → primitive; auditable). The mapping defaults
+  // to the built-in SEMANTIC_COLOR but a consumer can supply its own role
+  // vocabulary via options.semanticColor (sort a copy — never mutate the
+  // caller's array). $description is optional so an override tuple may omit it
+  // without emitting a stray key. ──
+  const semanticColorGroup = ordered([
     ['$type', 'color'],
-    ...[...SEMANTIC_COLOR]
+    ...[...semanticColor]
       .sort((a, b) => CODEPOINT(a[0], b[0]))
       .map(([role, primitive, why]) => [
         role,
-        { $value: `{color.${primitive}}`, $description: why },
+        why != null
+          ? { $value: `{color.${primitive}}`, $description: why }
+          : { $value: `{color.${primitive}}` },
       ]),
   ]);
 
@@ -265,7 +282,7 @@ export function buildDtcg(frontmatter, { outOfScopeComponents = new Set() } = {}
     ['rounded', rounded],
     ...(layout ? [['layout', layout]] : []),
     ['typography', typography],
-    ['semantic', ordered([['color', semanticColor]])],
+    ['semantic', ordered([['color', semanticColorGroup]])],
     ['component', component],
   ]);
 
