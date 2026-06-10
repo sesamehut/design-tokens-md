@@ -27,11 +27,20 @@
 //                    scheme already sits in :root. Never a second @theme; the
 //                    already-generated utilities re-resolve through the
 //                    overridden var at use-site.
+//
+// renderCssVars is the framework-agnostic sibling: the SAME token values and
+// variable names emitted as one plain CSS-variable block (no @theme), for
+// consumers that do not run Tailwind. The two renderers share every leaf
+// helper below; only the block grouping differs.
 
 import { normalizeText } from './io.mjs';
 import { DARK_EXTENSION_NS } from './model.mjs';
 
 const INDENT = '  ';
+
+/** A DTCG group's token names — its entries minus the `$type`/`$description` meta. */
+const tokensOf = (group) =>
+  Object.keys(group).filter((k) => k !== '$type' && k !== '$description');
 
 /**
  * Render a DESIGN.md `fontFamily` value as a CSS font-family value.
@@ -178,9 +187,6 @@ function renderColorModes(
  * for single-mode output (byte-identical to before this option existed).
  */
 export function renderTokensCss({ dtcg, header, colorModes }) {
-  const tokensOf = (group) =>
-    Object.keys(group).filter((k) => k !== '$type' && k !== '$description');
-
   const baseScheme = dtcg.$extensions?.[DARK_EXTENSION_NS]?.baseScheme;
   if (baseScheme !== 'light' && baseScheme !== 'dark') {
     throw new Error(
@@ -259,6 +265,36 @@ export function renderTokensCss({ dtcg, header, colorModes }) {
   // ── Optional color-mode override — emitted LAST so it wins the cascade, and
   // absent entirely when no primitive carries a delta, keeping the single-mode
   // default path byte-identical. ──
+  out.push(...colorModeOverrideLines(dtcg, baseScheme, colorModes, 'renderTokensCss'));
+
+  return normalizeText(out.join('\n'));
+}
+
+/**
+ * Read the explicit base scheme buildDtcg recorded at the DTCG root. Fail loud
+ * (never default to light) if the DTCG predates the explicit-baseScheme
+ * contract — the renderer must advertise the scheme the author declared.
+ */
+function readBaseScheme(dtcg, caller) {
+  const baseScheme = dtcg.$extensions?.[DARK_EXTENSION_NS]?.baseScheme;
+  if (baseScheme !== 'light' && baseScheme !== 'dark') {
+    throw new Error(
+      `${caller}: dtcg is missing $extensions["${DARK_EXTENSION_NS}"]` +
+        `.baseScheme — rebuild with buildDtcg (>= 0.5.0), which records the ` +
+        `explicit base scheme.`,
+    );
+  }
+  return baseScheme;
+}
+
+/**
+ * Collect the alternate-mode overrides primitives carry on their `$extensions`
+ * (empty unless DESIGN.md declared a colors-dark/colors-light delta), and emit
+ * the trailing override block. Shared by both renderers so the delta posture —
+ * fail loud when a delta exists but `colorModes` was omitted — is identical for
+ * the Tailwind and plain flavors. Returns `[]` (no bytes) when there is no delta.
+ */
+function colorModeOverrideLines(dtcg, baseScheme, colorModes, caller) {
   const modeEntries = tokensOf(dtcg.color)
     .map((name) => {
       const ext = dtcg.color[name].$extensions?.[DARK_EXTENSION_NS];
@@ -267,16 +303,106 @@ export function renderTokensCss({ dtcg, header, colorModes }) {
       return { name, mode, value: ext[mode] };
     })
     .filter(Boolean);
-  if (modeEntries.length > 0) {
-    if (!colorModes) {
-      throw new Error(
-        'tokens carry color-mode deltas ($extensions) but renderTokensCss was ' +
-          'called without `colorModes` — the CSS would silently drop them. ' +
-          'Pass { colorModes: { strategy: "selector" | "media" | "both" } }.',
-      );
-    }
-    out.push('', ...renderColorModes(modeEntries, baseScheme, colorModes));
+  if (modeEntries.length === 0) return [];
+  if (!colorModes) {
+    throw new Error(
+      `tokens carry color-mode deltas ($extensions) but ${caller} was ` +
+        'called without `colorModes` — the CSS would silently drop them. ' +
+        'Pass { colorModes: { strategy: "selector" | "media" | "both" } }.',
+    );
   }
+  return ['', ...renderColorModes(modeEntries, baseScheme, colorModes)];
+}
+
+/**
+ * Framework-agnostic renderer: canonical DTCG model → one plain CSS-variable
+ * block (LF, single trailing newline). Same token VALUES as renderTokensCss,
+ * but emitted as raw custom properties under a single `selector` (default
+ * `:root`) with NO Tailwind `@theme` / `@theme inline` — for consumers that do
+ * not run Tailwind (vanilla CSS, SSR string output, web components). The
+ * variable names mirror the Tailwind flavor (`--color-*`, `--spacing-*`,
+ * `--radius-*`, `--text-*` with the `--line-height`/`--font-weight`/
+ * `--letter-spacing`/`-font-family`/`-text-transform` companions) so a project
+ * can move between flavors without renaming references.
+ *
+ * `semantic` (default false) also emits the `--color-<role>` aliases; `components`
+ * (default false) also emits the `--component-<name>-*` visual contract — both
+ * off by default because a plain consumer typically references primitives and
+ * hand-writes its component CSS. `colorModes` behaves exactly as in
+ * renderTokensCss (required iff the DTCG carries a delta).
+ */
+export function renderCssVars({
+  dtcg,
+  header,
+  selector = ':root',
+  semantic = false,
+  components = false,
+  colorModes,
+}) {
+  const baseScheme = readBaseScheme(dtcg, 'renderCssVars');
+
+  const out = [];
+  out.push(header, '');
+  out.push(`${selector} {`);
+  out.push(`${INDENT}color-scheme: ${baseScheme};`);
+
+  out.push('', `${INDENT}/* Primitive · color */`);
+  for (const name of tokensOf(dtcg.color)) {
+    out.push(line(`color-${name}`, colorValueToCss(dtcg.color[name].$value)));
+  }
+  out.push('', `${INDENT}/* Primitive · spacing */`);
+  for (const name of tokensOf(dtcg.spacing)) {
+    out.push(line(`spacing-${name}`, aliasToVar(dtcg.spacing[name].$value)));
+  }
+  out.push('', `${INDENT}/* Primitive · radius */`);
+  for (const name of tokensOf(dtcg.rounded)) {
+    out.push(line(`radius-${name}`, aliasToVar(dtcg.rounded[name].$value)));
+  }
+  if (dtcg.layout) {
+    out.push('', `${INDENT}/* Primitive · layout — page rails / gutters / rhythm */`);
+    for (const name of tokensOf(dtcg.layout)) {
+      out.push(line(`layout-${name}`, aliasToVar(dtcg.layout[name].$value)));
+    }
+  }
+  // Full typography bundle in one place (the Tailwind flavor splits the family /
+  // transform companions out of @theme; the plain flavor has no such namespace).
+  out.push('', `${INDENT}/* Primitive · typography */`);
+  for (const name of tokensOf(dtcg.typography)) {
+    const v = dtcg.typography[name].$value;
+    out.push(line(`text-${name}`, v.fontSize));
+    out.push(line(`text-${name}--line-height`, v.lineHeight));
+    out.push(line(`text-${name}--font-weight`, String(v.fontWeight)));
+    out.push(line(`text-${name}--letter-spacing`, v.letterSpacing));
+    out.push(line(`text-${name}-font-family`, fontFamily(v.fontFamily)));
+    if (v.textTransform != null) {
+      out.push(line(`text-${name}-text-transform`, v.textTransform));
+    }
+  }
+
+  if (semantic) {
+    out.push('', `${INDENT}/* Semantic · color → primitive */`);
+    for (const role of tokensOf(dtcg.semantic.color)) {
+      out.push(line(`color-${role}`, aliasToVar(dtcg.semantic.color[role].$value)));
+    }
+  }
+
+  if (components) {
+    out.push('', `${INDENT}/* Component visual contract */`);
+    for (const name of tokensOf(dtcg.component)) {
+      const bundle = dtcg.component[name].$value;
+      for (const [field, raw] of Object.entries(bundle)) {
+        if (field === 'typography') {
+          out.push(...componentTypographyLines(name, raw, dtcg));
+          continue;
+        }
+        const cssField = field.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+        out.push(line(`component-${name}-${cssField}`, aliasToVar(raw)));
+      }
+    }
+  }
+
+  out.push('}');
+  out.push(...colorModeOverrideLines(dtcg, baseScheme, colorModes, 'renderCssVars'));
 
   return normalizeText(out.join('\n'));
 }

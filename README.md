@@ -29,7 +29,7 @@ This package fixes all three: a translation layer that preserves everything and 
 npm install --save-dev @sesamehut/design-tokens-md @google/design.md yaml
 ```
 
-`@google/design.md` and `yaml` are **peer dependencies**. Node ≥ 20, ESM only; **Tailwind v4** on the consuming side (the output uses `@theme` / `@theme inline`, not v3 `@tailwind` directives).
+`@google/design.md` and `yaml` are **peer dependencies**. Node ≥ 20, ESM only. The default renderer (`renderTokensCss`) targets **Tailwind v4** (`@theme` / `@theme inline`, not v3 `@tailwind` directives); a framework-agnostic renderer (`renderCssVars`, [below](#plain-css-output-no-tailwind)) emits the same tokens as a plain CSS-variable block for consumers that don't run Tailwind.
 
 ## Usage
 
@@ -94,7 +94,8 @@ All exports are pure functions or constants, imported from the package root.
 - **`readDesignMd(path)`** → `{ raw, frontmatter }`. Reads the file (CRLF→LF) and splits off the verbatim YAML frontmatter; throws if absent.
 - **`assertLintBaseline(report, baseline?)`** — gate on `@google/design.md`'s `lint()` output; throws **iff** a finding is outside the accepted `baseline` (membership-based, not severity-based — a documented warning floor passes, a *new* warning fails). Defaults to `DEFAULT_BASELINE`.
 - **`buildDtcg(frontmatter, options?)`** → `{ dtcg, scope: { kept, dropped, darkLiterals } }`. The translation layer; re-parses the YAML and builds canonical DTCG 2025.10 (color in `{colorSpace, components, alpha?, hex}` form, fixed group order, code-point order within each group). **`options.baseScheme` is required** (`'light' | 'dark'`) — the base palette's scheme is declared explicitly, never inferred; it is recorded at the DTCG root (`$extensions[DARK_EXTENSION_NS].baseScheme`) and drives the rendered `color-scheme`. `options.outOfScopeComponents` (`Set<string>`) drops chrome from the visual contract; `options.semanticColor` redefines the role→primitive layer (defaults to `SEMANTIC_COLOR`) and is checked for **referential integrity** — a role aliasing a primitive your `colors:` doesn't declare throws at build, not as a dangling `var()` at render. An optional `colors-dark:` / `colors-light:` frontmatter block (see [Dark mode](#dark-mode--color-modes)) attaches each override to its primitive's `$extensions`; `scope.darkLiterals` flags component color slots that can't flip.
-- **`renderTokensCss({ dtcg, header, colorModes? })`** → the full `tokens.css`: `@theme` primitives, `@theme inline` semantic aliases, and a `:root` block that **leads with the base `color-scheme`** (read from the DTCG's recorded `baseScheme`) followed by typography companions + the component contract. Sole authority over byte order. `colorModes` (required iff the DTCG carries a delta) appends the *alternate*-mode override block; without a delta the base scheme alone is emitted.
+- **`renderTokensCss({ dtcg, header, colorModes? })`** → the full **Tailwind v4** `tokens.css`: `@theme` primitives, `@theme inline` semantic aliases, and a `:root` block that **leads with the base `color-scheme`** (read from the DTCG's recorded `baseScheme`) followed by typography companions + the component contract. Sole authority over byte order. `colorModes` (required iff the DTCG carries a delta) appends the *alternate*-mode override block; without a delta the base scheme alone is emitted.
+- **`renderCssVars({ dtcg, header, selector?, semantic?, components?, colorModes? })`** → the same token values as one **plain CSS-variable block** (no `@theme`), for non-Tailwind consumers — see [Plain CSS output](#plain-css-output-no-tailwind).
 - **`SEMANTIC_COLOR`** — the default semantic mapping (see below); re-exported to inspect, extend, or replace.
 - **`DARK_EXTENSION_NS`** — the reverse-DNS `$extensions` namespace (`com.sesamehut.design-tokens-md`) under which a primitive carries its alternate-mode override; read it to build a non-CSS theme (e.g. React Native) from the DTCG file.
 - **`DEFAULT_BASELINE`** — accepted-floor lint identities for the `DESIGN.md` shape this package was first built against.
@@ -113,6 +114,29 @@ buildDtcg(frontmatter, {
   ],
 });
 ```
+
+### Plain CSS output (no Tailwind)
+
+Not every consumer runs Tailwind — a server that inlines `<style>`, a web component, or plain hand-written CSS needs real custom properties, not `@theme` (which is a Tailwind build-time directive a browser ignores). `renderCssVars` emits the **same token values and the same variable names** as `renderTokensCss`, but as one plain block under a single selector:
+
+```js
+import { renderCssVars } from '@sesamehut/design-tokens-md';
+
+const { dtcg } = buildDtcg(frontmatter, { baseScheme: 'light' });
+const css = renderCssVars({ dtcg, header });
+// :root {
+//   color-scheme: light;
+//   --color-canvas: #eeefe9;
+//   --spacing-md: 12px;
+//   --radius-md: 6px;
+//   --text-body: 16px;
+//   --text-body--line-height: 1.5;
+//   --text-body-font-family: "IBM Plex Sans", …;
+//   …
+// }
+```
+
+Options: `selector` (default `:root`), `semantic` (default `false` — also emit the `--color-<role>` aliases), `components` (default `false` — also emit the `--component-<name>-*` contract), and `colorModes` (identical to `renderTokensCss`). Both default off because a plain consumer usually references primitives and hand-writes its component CSS. Because the variable names match the Tailwind flavor, a project can switch flavors — or run both — without renaming a single reference.
 
 ### Beyond Google's base spec
 
@@ -172,10 +196,11 @@ Strategies:
 
 ## Used by
 
-- [**sesamehut.studio**](https://sesamehut.studio) — the SesameHut studio site (Astro + Tailwind v4)
-- **capy** — a cross-platform (Web + React Native via Uniwind) app design system
+- [**sesamehut.studio**](https://sesamehut.studio) — the SesameHut studio site (Astro + Tailwind v4) — `renderTokensCss`
+- **capy** — a cross-platform (Web + React Native via Uniwind) app design system — `renderTokensCss`
+- **sesamehut-auth** — the SesameHut identity provider (Hono SSR on Cloudflare Workers, no Tailwind) — `renderCssVars`
 
-Both consume the same published engine; each owns a thin orchestrator with its own `DESIGN.md` path, scope filter, and lint baseline.
+Each consumes the same published engine through a thin orchestrator with its own `DESIGN.md` path, scope filter, lint baseline, and renderer flavor.
 
 ## License
 
