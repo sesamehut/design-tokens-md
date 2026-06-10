@@ -188,17 +188,20 @@ function sortedEntries(obj) {
  *   role→primitive semantic layer as [role, primitive, description] tuples
  *   (same shape as the exported SEMANTIC_COLOR). A consumer whose DESIGN.md
  *   uses a different primitive vocabulary passes its own mapping; the rest of
- *   the pipeline is structure-agnostic. Defaults to SEMANTIC_COLOR — omitting
- *   it reproduces prior output byte-for-byte.
+ *   the pipeline is structure-agnostic. Defaults to SEMANTIC_COLOR.
+ * @param {'light'|'dark'} options.baseScheme REQUIRED — the color scheme of the
+ *   base `colors:` palette, declared explicitly (never inferred, no light
+ *   default). Drives the `color-scheme` the renderer advertises and fixes which
+ *   alternate-mode delta block is valid. Throws if absent or not 'light'|'dark'.
  *
- * Color modes (beyond Google's base spec): the base `colors:` palette is the
- * project's primary mode; an OPTIONAL sibling frontmatter block recolors a
- * subset of primitives for the *other* mode — `colors-dark:` (base is light)
- * or `colors-light:` (base is dark), mutually exclusive. Each override is
- * carried in the primitive's DTCG `$extensions` envelope; the renderer turns
- * it into a dark/light CSS block (see renderTokensCss `colorModes`). Absent
- * both blocks, every node keeps its single-mode `{ $value }` shape and output
- * is byte-identical.
+ * Color modes (beyond Google's base spec): `baseScheme` names the base palette's
+ * mode; an OPTIONAL sibling frontmatter block recolors a subset of primitives
+ * for the *other* mode — `colors-dark:` when the base is light, `colors-light:`
+ * when the base is dark (the same-as-base block is a contradiction). Each
+ * override rides the primitive's DTCG `$extensions`; the root node records
+ * `$extensions[ns].baseScheme`. The renderer always advertises the base
+ * `color-scheme` and, given a delta, emits the alternate-mode block (see
+ * renderTokensCss `colorModes`).
  *
  * @returns {{ dtcg: object, scope: { kept: string[], dropped: string[],
  *   darkLiterals: string[] } }} `darkLiterals` lists `component.field` color
@@ -207,25 +210,41 @@ function sortedEntries(obj) {
  */
 export function buildDtcg(
   frontmatter,
-  { outOfScopeComponents = new Set(), semanticColor = SEMANTIC_COLOR } = {},
+  {
+    outOfScopeComponents = new Set(),
+    semanticColor = SEMANTIC_COLOR,
+    baseScheme,
+  } = {},
 ) {
-  const fm = parse(frontmatter);
-
-  // ── Optional color-mode delta. The base `colors:` palette is the project's
-  // primary mode; an optional sibling block recolors a subset for the *other*
-  // mode — at most one (a base palette flips one way). Fail loud on both
-  // present, or on an override naming a primitive the base never declared
-  // (a dead var / typo). ──
-  const darkDelta = fm['colors-dark'];
-  const lightDelta = fm['colors-light'];
-  if (darkDelta && lightDelta) {
+  // The base color scheme is declared explicitly by the consumer, never
+  // inferred. There is no light default: a single-palette project still states
+  // whether that palette is light or dark, so the CSS advertises the right
+  // `color-scheme` and a dark-primary project is first-class.
+  if (baseScheme !== 'light' && baseScheme !== 'dark') {
     throw new Error(
-      'DESIGN.md declares both colors-dark and colors-light — a base palette ' +
-        'carries at most one alternate mode (model.mjs).',
+      `buildDtcg requires baseScheme: 'light' | 'dark' (got ` +
+        `${JSON.stringify(baseScheme)}) — the base color scheme is declared ` +
+        `explicitly, never inferred.`,
     );
   }
-  const altMode = darkDelta ? 'dark' : lightDelta ? 'light' : null;
-  const altDelta = darkDelta ?? lightDelta ?? null;
+
+  const fm = parse(frontmatter);
+
+  // ── Optional color-mode delta. The alternate mode is always the opposite of
+  // the (explicit) baseScheme; its sibling block recolors a subset of
+  // primitives. Fail loud on the same-as-base block (a contradiction), or on an
+  // override naming a primitive the base never declared (a dead var / typo). ──
+  const altMode = baseScheme === 'light' ? 'dark' : 'light';
+  const altDelta =
+    (altMode === 'dark' ? fm['colors-dark'] : fm['colors-light']) ?? null;
+  const contradictoryDelta =
+    altMode === 'dark' ? fm['colors-light'] : fm['colors-dark'];
+  if (contradictoryDelta) {
+    throw new Error(
+      `baseScheme '${baseScheme}' takes a colors-${altMode} override; a ` +
+        `colors-${baseScheme} block contradicts the declared base (model.mjs).`,
+    );
+  }
   if (altDelta) {
     for (const key of Object.keys(altDelta)) {
       if (!Object.hasOwn(fm.colors, key)) {
@@ -303,6 +322,23 @@ export function buildDtcg(
     }),
   ]);
 
+  // ── Referential integrity: every semantic role must alias a primitive the
+  // DESIGN.md actually declares, else the rendered CSS carries a dangling
+  // var(--color-x). Checked here where fm.colors is in scope — fail loud at
+  // build, not silently at render (matters most for a consumer-supplied
+  // semanticColor whose vocabulary can drift from the palette). ──
+  const missingPrimitives = [...semanticColor].filter(
+    ([, primitive]) => !Object.hasOwn(fm.colors, primitive),
+  );
+  if (missingPrimitives.length > 0) {
+    throw new Error(
+      `semanticColor references primitive(s) absent from DESIGN.md colors: ` +
+        missingPrimitives.map(([role, p]) => `${role} → ${p}`).join(', ') +
+        `. Available: ${Object.keys(fm.colors).sort(CODEPOINT).join(', ')} ` +
+        `(model.mjs).`,
+    );
+  }
+
   // ── Semantic · color (alias → primitive; auditable). The mapping defaults
   // to the built-in SEMANTIC_COLOR but a consumer can supply its own role
   // vocabulary via options.semanticColor (sort a copy — never mutate the
@@ -360,6 +396,7 @@ export function buildDtcg(
   const dtcg = ordered([
     ['$schema', 'https://www.designtokens.org/schemas/2025.10/format.json'],
     ['$description', str(fm.description).replace(/\n+$/, '')],
+    ['$extensions', { [DARK_EXTENSION_NS]: { baseScheme } }],
     ['color', color],
     ['spacing', spacing],
     ['rounded', rounded],

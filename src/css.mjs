@@ -16,15 +16,17 @@
 //                    --layout-* --text-* with
 //                    --line-height/--font-weight/--letter-spacing)
 //   @theme inline  — semantic aliases → var(--color-<primitive>)
-//   :root          — typography family/transform companions (no @theme
-//                    namespace) + the component visual contract. Component-
-//                    scoped, never utility-generating.
+//   :root          — the base `color-scheme` (explicit, from buildDtcg's
+//                    baseScheme) + typography family/transform companions (no
+//                    @theme namespace) + the component visual contract.
+//                    Component-scoped, never utility-generating.
 //   [color modes]  — OPTIONAL trailing block, emitted only when DESIGN.md
 //                    carries a colors-dark/colors-light delta AND `colorModes`
-//                    is passed: raw --color-* redeclaration under a dark/light
-//                    activation (selector / media / both). Never a second
-//                    @theme; the already-generated utilities re-resolve through
-//                    the overridden var at use-site.
+//                    is passed: raw --color-* redeclaration that activates the
+//                    *alternate* mode (selector / media / both) — the base
+//                    scheme already sits in :root. Never a second @theme; the
+//                    already-generated utilities re-resolve through the
+//                    overridden var at use-site.
 
 import { normalizeText } from './io.mjs';
 import { DARK_EXTENSION_NS } from './model.mjs';
@@ -113,12 +115,13 @@ function componentTypographyLines(name, raw, dtcg) {
 }
 
 /**
- * Render the optional color-mode override block from the alternate-mode deltas
- * collected off `$extensions`. Raw `--color-*` redeclaration under a dark/light
- * activation — NEVER a second `@theme` (which can't be conditionally scoped).
- * The base mode advertises its own `color-scheme`; the override flips both the
- * scheme and the changed primitives, and every utility/alias re-resolves
- * through `var(--color-*)` at use-site.
+ * Render the optional alternate-mode override block from the deltas collected
+ * off `$extensions`. The base mode's `color-scheme` lives in the main `:root`
+ * (see renderTokensCss); this block only activates the *other* mode — flipping
+ * `color-scheme` and the changed primitives under a selector and/or media
+ * query. Raw `--color-*` redeclaration, NEVER a second `@theme` (which can't be
+ * conditionally scoped); every utility/alias re-resolves through `var(--color-*)`
+ * at use-site. `altMode` is the opposite of the explicit `baseScheme`.
  *
  * `strategy`:
  *   'selector' (default) — `[data-theme=…]` rule only; pair with Tailwind's
@@ -128,11 +131,11 @@ function componentTypographyLines(name, raw, dtcg) {
  */
 function renderColorModes(
   entries,
+  baseScheme,
   {
     strategy = 'selector',
     darkSelector = '[data-theme="dark"]',
     lightSelector = '[data-theme="light"]',
-    colorScheme = true,
   } = {},
 ) {
   if (strategy !== 'selector' && strategy !== 'media' && strategy !== 'both') {
@@ -141,14 +144,12 @@ function renderColorModes(
         ' — expected "selector", "media", or "both".',
     );
   }
-  // buildDtcg enforces a single alternate mode, so every entry shares it.
-  const altMode = entries[0].mode;
-  const baseScheme = altMode === 'dark' ? 'light' : 'dark';
+  const altMode = baseScheme === 'light' ? 'dark' : 'light';
   const altSelector = altMode === 'dark' ? darkSelector : lightSelector;
   const guardSelector = altMode === 'dark' ? lightSelector : darkSelector;
 
   const body = [
-    ...(colorScheme ? [`${INDENT}color-scheme: ${altMode};`] : []),
+    `${INDENT}color-scheme: ${altMode};`,
     ...entries.map(({ name, value }) =>
       line(`color-${name}`, colorValueToCss(value)),
     ),
@@ -156,7 +157,6 @@ function renderColorModes(
   const nest = (lines) => lines.map((l) => (l === '' ? '' : `${INDENT}${l}`));
 
   const lines = [`/* Color modes — ${baseScheme} base + ${altMode} override */`];
-  if (colorScheme) lines.push(`:root { color-scheme: ${baseScheme}; }`);
   if (strategy === 'media' || strategy === 'both') {
     const root = strategy === 'both' ? `:root:not(${guardSelector})` : ':root';
     lines.push(
@@ -180,6 +180,15 @@ function renderColorModes(
 export function renderTokensCss({ dtcg, header, colorModes }) {
   const tokensOf = (group) =>
     Object.keys(group).filter((k) => k !== '$type' && k !== '$description');
+
+  const baseScheme = dtcg.$extensions?.[DARK_EXTENSION_NS]?.baseScheme;
+  if (baseScheme !== 'light' && baseScheme !== 'dark') {
+    throw new Error(
+      `renderTokensCss: dtcg is missing ` +
+        `$extensions["${DARK_EXTENSION_NS}"].baseScheme — rebuild with ` +
+        `buildDtcg (>= 0.5.0), which records the explicit base scheme.`,
+    );
+  }
 
   const out = [];
   out.push(header, '');
@@ -222,9 +231,10 @@ export function renderTokensCss({ dtcg, header, colorModes }) {
   }
   out.push('}', '');
 
-  // ── :root — typography companions + component visual contract ──
+  // ── :root — base color-scheme + typography companions + component contract ──
   out.push(':root {');
-  out.push(`${INDENT}/* Typography family / transform — no @theme namespace */`);
+  out.push(`${INDENT}color-scheme: ${baseScheme};`);
+  out.push('', `${INDENT}/* Typography family / transform — no @theme namespace */`);
   for (const name of tokensOf(dtcg.typography)) {
     const v = dtcg.typography[name].$value;
     out.push(line(`text-${name}-font-family`, fontFamily(v.fontFamily)));
@@ -265,7 +275,7 @@ export function renderTokensCss({ dtcg, header, colorModes }) {
           'Pass { colorModes: { strategy: "selector" | "media" | "both" } }.',
       );
     }
-    out.push('', ...renderColorModes(modeEntries, colorModes));
+    out.push('', ...renderColorModes(modeEntries, baseScheme, colorModes));
   }
 
   return normalizeText(out.join('\n'));
