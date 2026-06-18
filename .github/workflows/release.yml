@@ -1,0 +1,55 @@
+name: release
+
+# Publishes @sesamehut/design-tokens-md to npm when a version tag (vX.Y.Z) is pushed.
+#
+# Auth: npm Trusted Publishing via OIDC — there is NO NPM_TOKEN secret. The id-token
+# permission below lets the runner mint a short-lived OIDC token that npm exchanges for
+# publish credentials. Provenance attestation is generated automatically (no --provenance
+# flag needed) because the publish runs from a public repo via a configured trusted publisher.
+#
+# ONE-TIME SETUP (required before the first tag, or `npm publish` is rejected):
+#   npmjs.com → @sesamehut/design-tokens-md → Settings → Trusted Publisher → GitHub Actions
+#     Organization or user: sesamehut
+#     Repository:           design-tokens-md
+#     Workflow filename:    release.yml   (this file's name — must match exactly)
+#     Environment:          (leave blank)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read   # checkout
+  id-token: write  # mint the OIDC token npm exchanges for short-lived publish credentials
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'                      # OIDC publishing requires Node >= 22.14
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm to an OIDC-capable version
+        run: npm install -g npm@latest            # trusted publishing needs npm >= 11.5.1
+
+      - name: Verify the tag matches package.json version
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$PKG" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $PKG"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Smoke-check the published entry point imports
+        run: node -e "import('./src/index.mjs').then(m=>{if(!m.buildDtcg)throw new Error('export buildDtcg missing')}).catch(e=>{console.error(e);process.exit(1)})"
+
+      - name: Publish to npm (OIDC trusted publishing + automatic provenance)
+        run: npm publish
