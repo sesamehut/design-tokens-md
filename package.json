@@ -1,6 +1,6 @@
 {
   "name": "@sesamehut/design-tokens-md",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Drop-in replacement for @google/design.md's dtcg & css-tailwind exporters: compile a DESIGN.md into lossless W3C DTCG tokens and Tailwind v4 @theme CSS — pure, deterministic, byte-identical.",
   "type": "module",
   "main": "./src/index.mjs",

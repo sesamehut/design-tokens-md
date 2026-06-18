@@ -231,7 +231,7 @@ export function renderTokensCss({ dtcg, header, colorModes }) {
 
   // ── @theme inline — semantic (light-only; → primitive) ──
   out.push('@theme inline {');
-  out.push(`${INDENT}/* Semantic · color — design-system.md §一 (light-only) */`);
+  out.push(`${INDENT}/* Semantic · color (light-only) */`);
   for (const role of tokensOf(dtcg.semantic.color)) {
     out.push(line(`color-${role}`, aliasToVar(dtcg.semantic.color[role].$value)));
   }
@@ -248,7 +248,7 @@ export function renderTokensCss({ dtcg, header, colorModes }) {
       out.push(line(`text-${name}-text-transform`, v.textTransform));
     }
   }
-  out.push('', `${INDENT}/* Component visual contract — design-system.md §三 */`);
+  out.push('', `${INDENT}/* Component visual contract */`);
   for (const name of tokensOf(dtcg.component)) {
     const bundle = dtcg.component[name].$value;
     for (const [field, raw] of Object.entries(bundle)) {
