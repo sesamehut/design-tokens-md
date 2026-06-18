@@ -1,0 +1,37 @@
+name: ci
+
+# Fast pre-release gate: runs on every push to main and on PRs so that a broken entry
+# point or packaging mistake is caught before a release tag is ever cut. Mirrors the
+# package's supported runtimes (engines.node: ">=20").
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Smoke-check entry point imports
+        run: node -e "import('./src/index.mjs').then(m=>{if(!m.buildDtcg)throw new Error('export buildDtcg missing')}).catch(e=>{console.error(e);process.exit(1)})"
+
+      - name: Validate package tarball contents
+        run: npm pack --dry-run
