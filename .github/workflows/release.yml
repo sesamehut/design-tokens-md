@@ -13,6 +13,12 @@ name: release
 #     Repository:           design-tokens-md
 #     Workflow filename:    release.yml   (this file's name — must match exactly)
 #     Environment:          (leave blank)
+#     Allowed actions:      tick "npm publish" (entries created after 2026-09-03 default to
+#                           "npm stage publish" only; a plain `npm publish` then fails with
+#                           `403 OIDC permission denied for this action`, even though the
+#                           provenance statement has already been signed and logged)
+#   Entries cannot be edited after creation — to fix the allowed actions, delete the entry
+#   and create a new one with the same fields.
 
 on:
   push:
